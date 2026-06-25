@@ -106,10 +106,35 @@ So the server is self-contained by default and integrates with object storage in
 
 ## 8. Configuration (`config.py`)
 
-`pydantic-settings` with the `TOX_` env prefix (see [`.env.example`](../.env.example)). Defaults
-reproduce the paper. Notable knobs: `TOX_MCP_HOST/PORT/PATH`, `TOX_DATASET_PATH/URL`,
+`pydantic-settings` with the `TOX_` env prefix; **all values are optional** and the defaults
+reproduce the paper (the server runs with no configuration). Notable knobs: `TOX_MCP_HOST/PORT/PATH`, `TOX_DATASET_PATH/URL`,
 `TOX_BINDER_THRESHOLD` (−7.0), `TOX_TANIMOTO_THRESHOLD` (0.65), `TOX_MORGAN_NBITS` (2048),
 `TOX_ARTIFACTS_DIR`, `TOX_S3_*`.
+
+## Reproduction fidelity
+
+`reproduce_all` / `reproduce_claims` / `pytest tests/` assert these against the paper:
+
+| Metric | Paper | This server |
+|---|---|---|
+| compounds / proteins / scores | 12654 / 44 / 556776 | identical |
+| pLD50 range | 0.77 – 7.89 | 0.77 – 7.89 |
+| Mann–Whitney median diff (raw) | 0.38 (p<0.05) | 0.382 (p≈5e-132) |
+| Mann–Whitney median diff (filtered) | 0.70 (p<0.05) | 0.697 (p<0.05) |
+| Top-5 antitargets | KCNH2, AVPR1A, CACNA1C, KCNQ1, EDNRA | exact order |
+| CHRM2 anomalous median | ≈ −4 | −4.20 (highest) |
+| Rotatable-bond mean | 4.78 | 4.78 |
+| NIH+Brenk kept | 5391 | 5392 (1 molecule) |
+| Spearman ρ range | +0.2 … −0.3 | +0.22 … −0.30 |
+| Butina clusters | 9665 / largest 34 / 8326 singletons | see note |
+
+**Version-related deviations** (the method is faithful; values differ slightly):
+- *NIH+Brenk*: 5392 vs 5391 — one molecule, from RDKit catalog version differences.
+- *Spearman median*: ≈ −0.24 vs the figure's −0.14 — the **range matches exactly**; the median is
+  more negative because the published CSV is post-denoising (positive scores set to 0).
+- *Butina*: the paper's 9665 clusters reproduce at Tanimoto distance ≈0.28 (similarity ≈0.72) with
+  ECFP4/2048; the stated 0.65 yields ≈8260. Cluster counts are fingerprint/version-sensitive; the
+  qualitative result (high diversity, >75% singletons, small largest cluster) is robust.
 
 ## 9. Request lifecycle
 

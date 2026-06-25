@@ -5,5 +5,5 @@ services:
     ports:
       - "7335:7331"          # host 7335 -> container 7331 (/mcp)
     restart: unless-stopped
-    # Optional configuration (S3 figure storage, custom dataset URL, thresholds):
-    # env_file: .env
+    # Runs with no configuration. To tune it (S3 figure storage, thresholds), pass
+    # TOX_* variables via an `environment:` block.
