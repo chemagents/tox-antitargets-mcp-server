@@ -1,0 +1,9 @@
+services:
+  tox-antitargets-mcp-server:
+    build: .
+    container_name: tox-antitargets-mcp-server
+    ports:
+      - "7335:7331"          # host 7335 -> container 7331 (/mcp)
+    restart: unless-stopped
+    # Optional configuration (S3 figure storage, custom dataset URL, thresholds):
+    # env_file: .env

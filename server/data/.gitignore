@@ -1,0 +1,2 @@
+# The dataset is bundled intentionally (overrides the repo-root `*.csv` rule).
+!antitargets_LD50_affinity.csv
