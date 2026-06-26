@@ -1,7 +1,7 @@
 # Architecture & internals
 
 This document explains **how the server is built and how it reproduces the paper**. For the
-scientific/agent questions, see [`QUESTIONS.md`](QUESTIONS.md).
+scientific/agent questions, see [`REPRODUCTION_QUESTIONS.md`](../REPRODUCTION_QUESTIONS.md).
 
 ## 1. Design philosophy
 

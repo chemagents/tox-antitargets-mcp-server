@@ -1,9 +1,11 @@
 services:
   tox-antitargets-mcp-server:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: tox-antitargets-mcp-server
+    environment:
+      PYTHONUNBUFFERED: "1"
     ports:
-      - "7335:7331"          # host 7335 -> container 7331 (/mcp)
+      - "7335:7331"   # host 7335 -> container 7331 (matches the CoScientist stack)
     restart: unless-stopped
-    # Runs with no configuration. To tune it (S3 figure storage, thresholds), pass
-    # TOX_* variables via an `environment:` block.
