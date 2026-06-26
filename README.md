@@ -72,18 +72,33 @@ uv run pytest tests                       # 11/11 reproduction checks
 
 No configuration is required; the server works out of the box.
 
-## Run with Docker
+## Run with Docker (standalone)
 
 ```bash
 docker compose up -d --build              # host port 7335 -> container 7331
 ```
+
+This standalone mode needs **no changes to CoScientist**. To run it as a service *inside* the
+CoScientist docker stack instead, see "Attach to CoScientist" below.
 
 ## Attach to CoScientist
 
 > **Full turnkey guide + a verified end-to-end run log:** [`COSCIENTIST_INTEGRATION.md`](./COSCIENTIST_INTEGRATION.md).
 > Tested inside CoScientist (OpenRouter LLM, FEDOT.MAS calling these tools to reproduce Fig. 5).
 
-CoScientist discovers MCP tools via RAG (Postgres + Qdrant). Register this server once:
+**Does a colleague need to change anything in CoScientist?** Only to run this server *as part of the
+CoScientist docker stack*. Two modes:
+
+- **Just register a reachable server** — the standalone container/process above is enough; **no
+  changes to CoScientist's files**. Jump to the `cli.py` command below.
+- **Run it inside CoScientist's docker stack** — add a service to CoScientist's
+  `mcp-servers/docker-compose.yml` that builds with **`Dockerfile.coscientist`** (the plain
+  `Dockerfile` is only for the standalone `context: .`). That entry lives in the **CoScientist
+  repo** and is done by whoever runs the stack — see [`COSCIENTIST_INTEGRATION.md`](./COSCIENTIST_INTEGRATION.md)
+  step 2 for the exact YAML.
+
+Either way, the agents only *use* the tools after you register the server in the RAG (Postgres +
+Qdrant). Register it once:
 
 ```bash
 # from the CoScientist repo root, with the RAG stack running and .env configured
