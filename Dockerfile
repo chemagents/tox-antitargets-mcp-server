@@ -1,7 +1,6 @@
-# Standalone image for the tox-antitargets MCP server.
-FROM python:3.12-slim
+FROM python:3.12-slim@sha256:229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36
 
-# RDKit / scientific stack runtime libraries (slim image omits these).
+# RDKit / scientific stack runtime libs (slim image omits these).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrender1 \
     libxext6 \
@@ -10,13 +9,31 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Build context is this repository's root.
-COPY pyproject.toml README.md ./
-COPY server ./server
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir "uv==0.7.11"
 
-ENV TOX_ARTIFACTS_DIR=/app/artifacts
-RUN mkdir -p /app/artifacts
+# Build context is the repo root (mcp-servers/docker-compose.yml uses context: ..).
+COPY mcp-servers/tox-antitargets-mcp-server/pyproject.toml mcp-servers/tox-antitargets-mcp-server/README.md mcp-servers/tox-antitargets-mcp-server/uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
 
+COPY mcp-servers/tox-antitargets-mcp-server/server ./server
+
+# Run the service without root privileges.  The local artifact fallback and the
+# scientific libraries' user caches remain writable; application code stays root-owned.
+RUN groupadd --gid 10001 mcp \
+  && useradd --uid 10001 --gid 10001 --home-dir /app --no-create-home \
+       --shell /usr/sbin/nologin mcp \
+  && mkdir -p /app/artifacts /app/.cache/matplotlib /app/.config /app/.local \
+  && chown -R 10001:10001 /app/artifacts /app/.cache /app/.config /app/.local
+
+ENV UV_SYSTEM_PYTHON=1 \
+    HOME=/app \
+    PYTHONPATH=/app \
+    XDG_CACHE_HOME=/app/.cache \
+    MPLCONFIGDIR=/app/.cache/matplotlib \
+    MPLBACKEND=Agg \
+    PYTHONDONTWRITEBYTECODE=1
+
+USER 10001:10001
 EXPOSE 7331
-CMD ["python", "-m", "server.tox_server"]
+
+CMD ["/app/.venv/bin/python", "-m", "server.tox_server"]

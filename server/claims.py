@@ -35,13 +35,25 @@ def _c_overview(ds: Dataset) -> dict:
 
 def _c_chrm2(ds: Dataset) -> dict:
     meds = science.protein_score_medians(ds)
+    if not meds:
+        return {"evidence": {}, "reproduced": False,
+                "reproduced_statement": "No per-protein docking medians could be computed."}
     top = meds[0]
+    panel_med = float(np.median([m["median"] for m in meds]))
+    # The paper names CHRM2 and ~-4; both must be RECOMPUTED, because the top protein and its
+    # median change with the dataset and the statement must never contradict `evidence`.
     return {
         "evidence": {"highest_median_protein": top["protein"], "median": round(top["median"], 2),
-                     "panel_median": round(float(np.median([m["median"] for m in meds])), 2)},
+                     "panel_median": round(panel_med, 2),
+                     "paper_expected_protein": "CHRM2"},
         "reproduced": top["protein"] == "CHRM2" and top["median"] > -5,
-        "reproduced_statement": f"{top['protein']} shows the highest (least negative) median docking "
-                                f"score ({top['median']:.2f}); most proteins fall in -6 to -8.",
+        "reproduced_statement": (
+            f"{top['protein']} shows the highest (least negative) median docking score "
+            f"({top['median']:.2f}) against a panel median of {panel_med:.2f}"
+            + (" — the paper's anomalous protein (CHRM2, M2 muscarinic, small active site)."
+               if top["protein"] == "CHRM2" else
+               f" — the paper names CHRM2 as the anomaly, but the highest median here is "
+               f"{top['protein']}, so this claim does NOT reproduce as stated.")),
     }
 
 
@@ -49,36 +61,71 @@ def _c_nonbinders_safest(ds: Dataset) -> dict:
     thr = get_settings().binder_threshold
     assoc = science.antitarget_association(ds, thr)
     none_med = assoc["none_subset"]["median_pLD50"]
-    min_binder_med = min(r["median_pLD50"] for r in assoc["ranking"])
+    ranking = assoc["ranking"]
+    if none_med is None or not ranking:
+        return {"evidence": {"none_median_pLD50": none_med, "n_binder_subsets": len(ranking)},
+                "reproduced": False,
+                "reproduced_statement": (
+                    "The non-binder subset is empty or no antitarget has a strong-binder subset at "
+                    f"threshold {thr} kcal/mol, so the claim cannot be evaluated at this threshold.")}
+    min_binder_med = min(r["median_pLD50"] for r in ranking)
+    lowest = min(ranking, key=lambda r: r["median_pLD50"])
     return {
         "evidence": {"none_median_pLD50": round(none_med, 3),
-                     "lowest_binder_subset_median": round(min_binder_med, 3)},
+                     "lowest_binder_subset_median": round(min_binder_med, 3),
+                     "lowest_binder_subset_protein": lowest["protein"],
+                     "binder_threshold_kcal_mol": thr},
         "reproduced": none_med < min_binder_med,
-        "reproduced_statement": f"Ligands binding no antitarget have the lowest pLD50 "
-                                f"(median {none_med:.2f}), i.e. are the least toxic subset.",
+        "reproduced_statement": (
+            f"Ligands binding no antitarget have median pLD50 {none_med:.2f}, "
+            + (f"below the least-toxic binder subset ({lowest['protein']}, {min_binder_med:.2f}), "
+               f"i.e. they are the least toxic subset."
+               if none_med < min_binder_med else
+               f"which is NOT below the least-toxic binder subset ({lowest['protein']}, "
+               f"{min_binder_med:.2f}), so the paper's ordering does not reproduce here.")),
     }
 
 
 def _c_top5_cardio(ds: Dataset) -> dict:
     thr = get_settings().binder_threshold
     assoc = science.antitarget_association(ds, thr)
+    top5 = assoc["top5"]
+    matches = top5 == TOP5_ANTITARGETS
     return {
-        "evidence": {"top5": assoc["top5"], "paper_top5": TOP5_ANTITARGETS},
-        "reproduced": assoc["top5"] == TOP5_ANTITARGETS,
-        "reproduced_statement": "The five antitargets most associated with toxicity are "
-                                "hERG/KCNH2, AVPR1A, CACNA1C, KCNQ1 and EDNRA - all cardiovascular.",
+        "evidence": {"top5": top5, "paper_top5": TOP5_ANTITARGETS,
+                     "binder_threshold_kcal_mol": thr},
+        "reproduced": matches,
+        "reproduced_statement": (
+            f"The five antitargets most associated with acute toxicity are "
+            f"{', '.join(top5) if top5 else 'not computable at this threshold'}"
+            + (" — matching the paper's top-5 (hERG/KCNH2, AVPR1A, CACNA1C, KCNQ1, EDNRA), all "
+               "cardiovascular." if matches else
+               f" — the paper's top-5 is {', '.join(TOP5_ANTITARGETS)}, so this ranking does NOT "
+               f"reproduce at threshold {thr} kcal/mol.")),
     }
 
 
 def _c_binders_raw(ds: Dataset) -> dict:
     thr = get_settings().binder_threshold
     r = science.mann_whitney(ds, thr)
+    if "p_value" not in r:
+        return {"evidence": {"n_binders": r.get("n_binders"), "n_nonbinders": r.get("n_nonbinders"),
+                             "binder_threshold_kcal_mol": thr},
+                "reproduced": False,
+                "reproduced_statement": (
+                    f"One of the two groups is empty at threshold {thr} kcal/mol "
+                    f"(binders {r.get('n_binders')}, non-binders {r.get('n_nonbinders')}), so no "
+                    "Mann-Whitney test could be run.")}
     return {
         "evidence": {"median_diff": round(r["median_diff"], 3), "p_value": r["p_value"],
-                     "n_binders": r["n_binders"], "n_nonbinders": r["n_nonbinders"]},
+                     "n_binders": r["n_binders"], "n_nonbinders": r["n_nonbinders"],
+                     "significant": bool(r["significant"])},
         "reproduced": r["significant"] and abs(r["median_diff"] - 0.38) < 0.05,
-        "reproduced_statement": f"Binders are significantly more toxic than non-binders in the raw "
-                                f"data (median diff {r['median_diff']:.2f}, Mann-Whitney p={r['p_value']:.1e}).",
+        "reproduced_statement": (
+            f"Binders are {'significantly ' if r['significant'] else 'NOT significantly '}"
+            f"{'more' if r['median_diff'] > 0 else 'less'} toxic than non-binders in the raw data "
+            f"(median diff {r['median_diff']:+.2f} pLD50, Mann-Whitney p={r['p_value']:.1e}, "
+            f"n={r['n_binders']}/{r['n_nonbinders']})."),
     }
 
 
@@ -87,47 +134,90 @@ def _c_filter_doubles(ds: Dataset) -> dict:
     keep, counts = science.nih_brenk_keep_mask(ds)
     raw = science.mann_whitney(ds, thr)
     filt = science.mann_whitney(ds, thr, subset_mask=keep)
+    if "p_value" not in raw or "p_value" not in filt:
+        return {"evidence": {"kept": counts["kept"]}, "reproduced": False,
+                "reproduced_statement": (
+                    f"After NIH+Brenk filtering ({ds.n} -> {counts['kept']}) one of the two groups "
+                    "is empty, so the filtered Mann-Whitney test could not be run.")}
+    direction = ("rises" if filt["median_diff"] > raw["median_diff"] else
+                 "falls" if filt["median_diff"] < raw["median_diff"] else "is unchanged at")
     return {
         "evidence": {"kept": counts["kept"], "raw_diff": round(raw["median_diff"], 3),
-                     "filtered_diff": round(filt["median_diff"], 3), "filtered_p": filt["p_value"]},
+                     "filtered_diff": round(filt["median_diff"], 3), "filtered_p": filt["p_value"],
+                     "filtered_significant": bool(filt["significant"])},
         "reproduced": abs(counts["kept"] - 5391) <= 5 and filt["significant"]
                       and abs(filt["median_diff"] - 0.70) < 0.06,
         "reproduced_statement": f"After NIH+Brenk filtering ({ds.n} -> {counts['kept']}), the binder/"
-                                f"non-binder median difference rises from {raw['median_diff']:.2f} to "
-                                f"{filt['median_diff']:.2f} (p<0.05): a chemical-space region where "
-                                f"antitarget-profile toxicity prediction is more relevant.",
+                                f"non-binder median difference {direction} {raw['median_diff']:.2f} to "
+                                f"{filt['median_diff']:.2f} (filtered Mann-Whitney p="
+                                f"{filt['p_value']:.1e}, "
+                                f"{'significant' if filt['significant'] else 'NOT significant'} at "
+                                f"alpha=0.05).",
     }
 
 
 def _c_inverse_docking(ds: Dataset) -> dict:
     rows = []
-    ok = True
+    missing = []
+    n_hit = 0
     for ex in EXAMPLE_MOLECULES:
         ri = ds.index_for_smiles(ex["smiles"])
         if ri is None:
-            ok = False
+            missing.append(ex["name"])
+            rows.append({"name": ex["name"], "known": ex["known_targets"],
+                         "best_known_rank": None, "in_dataset": False})
             continue
         prof = science.inverse_docking_profile(ds, ri, ex["known_targets"])
+        rank = prof["best_known_target_rank"]
         rows.append({"name": ex["name"], "known": ex["known_targets"],
-                     "best_known_rank": prof["best_known_target_rank"]})
-        ok = ok and prof["best_known_target_rank"] <= 10
+                     "best_known_rank": rank, "in_dataset": True})
+        n_hit += int(rank is not None and rank <= 10)
+    n_total = len(EXAMPLE_MOLECULES)
+    n_panel = len(ds.protein_cols)
+    resolved = [r for r in rows if r["in_dataset"]]
+    detail = ", ".join(f"{r['name']} rank {r['best_known_rank']}" for r in resolved)
     return {
-        "evidence": {"examples": rows},
-        "reproduced": ok,
-        "reproduced_statement": "For anisodamine (M1/alpha1), butaperazine (D2), soman (AChE) and "
-                                "three cannabinoids (CB1/CB2), the known target is among the strongest "
-                                "binders - inverse docking recovers mechanism of action.",
+        "evidence": {"examples": rows, "n_with_known_target_in_top10": n_hit,
+                     "n_examples": n_total, "n_examples_missing_from_dataset": len(missing),
+                     "panel_size": n_panel},
+        "reproduced": not missing and n_hit == n_total,
+        "reproduced_statement": (
+            f"For {n_hit}/{n_total} reference molecules the known target ranks in the top 10 of "
+            f"{n_panel} antitargets ({detail})"
+            + (f"; {len(missing)} molecule(s) are absent from the dataset ({', '.join(missing)})"
+               if missing else "")
+            + (" — inverse docking recovers mechanism of action for these molecules."
+               if not missing and n_hit == n_total else
+               " — so the paper's mechanism-recovery claim does NOT fully reproduce here.")),
     }
 
 
 def _c_weak_raw_spearman(ds: Dataset) -> dict:
     sp = science.spearman_per_protein(ds)
+    thr = get_settings().binder_threshold
+    # The paper's "almost no association" refers to the CONTINUOUS estimator only. Stating it
+    # bare invites the reader to conclude that antitargets and toxicity are unrelated, which the
+    # categorical test on the same data contradicts — so recompute and attach that test here too.
+    mw = science.mann_whitney(ds, thr)
+    cat = ""
+    if "p_value" in mw:
+        cat = (f" The CATEGORICAL test on the same data does show a relationship: binders vs "
+               f"non-binders differ by {mw['median_diff']:+.2f} pLD50 "
+               f"(Mann-Whitney p={mw['p_value']:.1e}, "
+               f"{'significant' if mw['significant'] else 'not significant'}), so this is a "
+               f"limitation of the raw continuous estimator, NOT evidence that antitarget binding "
+               f"and acute toxicity are unrelated.")
     return {
-        "evidence": {"median": round(sp["median"], 3), "min": round(sp["min"], 3), "max": round(sp["max"], 3)},
+        "evidence": {"median": round(sp["median"], 3), "min": round(sp["min"], 3),
+                     "max": round(sp["max"], 3),
+                     "categorical_cross_check": {k: mw.get(k) for k in
+                                                 ("median_diff", "p_value", "significant",
+                                                  "n_binders", "n_nonbinders")}},
         "reproduced": sp["min"] > -0.35 and 0.15 < sp["max"] < 0.30 and sp["median"] < 0,
-        "reproduced_statement": f"Per-protein Spearman(docking, pLD50) ranges {sp['max']:.2f} to "
-                                f"{sp['min']:.2f} - almost no association in the raw data, motivating "
-                                f"per-cluster analysis.",
+        "reproduced_statement": f"Per-protein Spearman(docking, pLD50) ranges {sp['max']:+.2f} to "
+                                f"{sp['min']:+.2f} (median {sp['median']:+.2f}) — no single docking "
+                                f"score is a monotone predictor of pLD50 in the raw data, motivating "
+                                f"per-cluster analysis." + cat,
     }
 
 
@@ -135,12 +225,23 @@ def _c_cluster_variance(ds: Dataset) -> dict:
     s = get_settings()
     cm = science.cluster_correlation_matrix(ds, 15, s.tanimoto_threshold, s.morgan_nbits)
     vals = cm["matrix"][~np.isnan(cm["matrix"])]
+    if not vals.size:
+        return {"evidence": {"n_defined_cells": 0}, "reproduced": False,
+                "reproduced_statement": "No within-cluster correlation could be computed (every "
+                                        "cluster x protein cell is undefined)."}
+    lo, hi = float(vals.min()), float(vals.max())
     return {
-        "evidence": {"rho_min": round(float(vals.min()), 2), "rho_max": round(float(vals.max()), 2)},
-        "reproduced": vals.min() < -0.5 and vals.max() > 0.5,
-        "reproduced_statement": f"Within-cluster Spearman correlations vary markedly "
-                                f"({vals.min():.2f} to {vals.max():.2f}), so raw docking data require "
-                                f"per-cluster post-processing.",
+        "evidence": {"rho_min": round(lo, 2), "rho_max": round(hi, 2),
+                     "rho_median": round(float(np.median(vals)), 2),
+                     "n_defined_cells": int(vals.size)},
+        "reproduced": lo < -0.5 and hi > 0.5,
+        "reproduced_statement": f"Within-cluster Spearman correlations span {lo:+.2f} to {hi:+.2f} "
+                                f"over {vals.size} defined cluster x protein cells (median "
+                                f"{float(np.median(vals)):+.2f})"
+                                + (", i.e. they vary markedly, so raw docking data require "
+                                   "per-cluster post-processing." if lo < -0.5 and hi > 0.5 else
+                                   ", a narrower spread than the paper's, so the "
+                                   "per-cluster-variation claim does not reproduce at this width."),
     }
 
 
@@ -152,13 +253,27 @@ def _c_logp_confounder(ds: Dataset) -> dict:
                 "reproduced_statement": "Aliphatic-acid cluster not found."}
     conf = science.logp_confounder(ds, cl["indices"])
     rho = conf["logp_vs_pLD50_rho"]
+    base = {"cluster_rank": cl["rank"], "cluster_size": cl["size"],
+            "acid_fraction": round(cl["acid_fraction"], 2), "logP_vs_pLD50_rho": None}
+    if rho is None:
+        return {"evidence": base, "reproduced": False,
+                "reproduced_statement": (
+                    f"Spearman(logP, pLD50) is undefined in the aliphatic-acid cluster "
+                    f"(n={cl['size']}, e.g. constant input), so the logP-confounder claim cannot be "
+                    f"evaluated.")}
+    base["logP_vs_pLD50_rho"] = round(rho, 2)
+    strength = "strongly" if abs(rho) >= 0.8 else "moderately" if abs(rho) >= 0.5 else "weakly"
     return {
-        "evidence": {"cluster_rank": cl["rank"], "cluster_size": cl["size"],
-                     "acid_fraction": round(cl["acid_fraction"], 2), "logP_vs_pLD50_rho": round(rho, 2)},
-        "reproduced": rho is not None and rho > 0.8,
-        "reproduced_statement": f"In the homologous aliphatic carboxylic-acid cluster, logP correlates "
-                                f"with pLD50 (rho={rho:.2f}); such correlations reflect a hidden variable "
-                                f"(logP), not necessarily a mechanism of action.",
+        "evidence": base,
+        "reproduced": rho > 0.8,
+        "reproduced_statement": f"In the homologous aliphatic carboxylic-acid cluster (n="
+                                f"{cl['size']}), logP {strength} correlates with pLD50 "
+                                f"(rho={rho:+.2f})"
+                                + ("; such a correlation reflects a hidden variable (logP), not "
+                                   "necessarily a mechanism of action."
+                                   if abs(rho) >= 0.5 else
+                                   "; the correlation is too weak here to demonstrate the paper's "
+                                   "logP-confounder effect, so the claim does not reproduce."),
     }
 
 

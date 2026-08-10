@@ -1,115 +1,136 @@
-# Questions: what the paper answers, and what the agent should answer
+# Reproducing the paper's *assertions* (not just numbers) via CoScientist
 
-This server exists to answer, reproducibly and on demand, the questions the paper poses. This doc
-has three parts:
+There are two layers of reproduction:
 
-- **Part A** — the scientific questions the *paper* answers (with its answers).
-- **Part B** — the questions a colleague should ask the *agent* (CoScientist), each mapped to the
-  tool that answers it and the expected result.
-- **Part C** — how the agent turns tool numbers into the paper's conclusions.
+1. **Numbers / figures** — the MCP tools compute them deterministically.
+2. **Assertions (conclusions)** — natural-language statements the paper draws *from* those
+   numbers. An LLM must turn numbers → statements.
 
----
+How the numbers reach the LLM in CoScientist:
 
-## Part A — Questions the paper answers
+```
+user question
+  -> OrchestratorAgent              (plans, then delegates)
+     -> TaskExecutorAgent
+        -> ToolPreparerAgent        (ToolRetrieverAgent + ToolReranker: RAG finds tox-antitargets tools)
+        -> ExperimentAgent          (FEDOT.MAS calls the MCP tool over HTTP, gets the JSON result)
+  -> OrchestratorAgent              (LLM composes the final natural-language answer from the results)
+```
 
-The paper (Nikitin et al. 2025) is a step toward *explainable* computational toxicology: using a
-molecule's binding profile against a panel of toxicity-relevant "antitargets" as a
-mechanism-aware descriptor for acute toxicity (LD50). Its research questions and answers:
+So yes: the tool result (numbers) is passed back through `fedot_results` and the **Orchestrator
+LLM** writes the conclusion. To keep that conclusion *faithful* (no hallucinated interpretation),
+every tox-antitargets tool returns a `finding` field **generated from the numbers computed in that
+same call**, and the dedicated **`antitarget_reproduce_claims`** tool returns, per claim, a
+`reproduced_statement` — the paper's assertion restated with our numbers. The LLM can relay these
+verbatim (exact reproduction) or synthesise from `evidence`.
 
-1. **Does binding to antitarget proteins relate to acute systemic toxicity (LD50)?**
-   Yes. Ligands that strongly bind (docking score < −7 kcal/mol) at least one antitarget are
-   significantly more toxic than non-binders (Mann–Whitney p < 0.05). Conversely, *not* binding
-   any antitarget correlates with low toxicity — except for nonspecific toxicants.
+## Tool names on the wire
 
-2. **Which antitargets are most associated with rodent acute toxicity?**
-   The top five (by median pLD50 of their strong-binder subset) are **hERG/KCNH2, AVPR1A,
-   CACNA1C, KCNQ1, EDNRA** — all act on the cardiovascular system.
+`dataset_overview`, `reproduce_all` and `reproduce_claims` existed under identical names in the
+`heracleum-tox` and `cannabis-biopesticide` servers, which are exposed to the agent at the same
+time; the agent mis-routed and even hallucinated a tool name. In this server they are registered
+as **`antitarget_dataset_overview`**, **`antitarget_reproduce_all`** and
+**`antitarget_reproduce_claims`** (`@mcp.tool(name=...)`; the Python function names are unchanged).
+All other tool names in this server are unchanged. Use the prefixed names when asking CoScientist
+to call a specific tool.
 
-3. **Does restricting the chemical space improve the antitarget signal?**
-   Yes. Applying medicinal-chemistry filters (NIH + Brenk) reduces the set 12 654 → 5 391 and
-   nearly **doubles** the binder/non-binder toxicity gap (median difference 0.38 → 0.70). The
-   filters remove nonspecific toxicants (toxicophores, surfactants) that are toxic *regardless* of
-   protein binding, delineating a chemical space where the panel-based concept is more valid.
+## Recommended: sequential natural-question scenario
 
-4. **Can inverse docking against the panel recover a molecule's known mechanism (target fishing)?**
-   Yes. For anisodamine (M1 muscarinic / α1-adrenergic), butaperazine (dopamine D2), soman
-   (acetylcholinesterase) and three cannabinoids (CB1/CB2), the experimentally known targets rank
-   among the strongest-binding proteins in the profile.
+`antitarget_reproduce_claims` / a single "reproduce the paper" request works but retrieves poorly
+and reads unnaturally. The intended usage is a **sequence of natural scientific questions**, each
+of which routes to a *set* of tools; the Orchestrator synthesises one interpretable conclusion per
+step. This is what to feed CoScientist. The goal is an interpretable account of the
+antitarget-affinity ↔ acute-toxicity relationship, distinguishing mechanistically-grounded
+correlations from ones driven by hidden variables.
 
-5. **Is there a direct per-protein correlation between docking score and LD50 over the whole set?**
-   Almost none in raw data: per-protein Spearman ρ ranges ≈ +0.2 to −0.3 (weakly negative). Raw
-   scores carry noise (non-binders, sub-threshold scores, cross-chemotype comparison), so the
-   relationship must be examined per chemical cluster.
+Two mechanisms make the *set* actually get retrieved and chained:
 
-6. **Do structure–toxicity correlations differ between chemical families?**
-   Yes, markedly. Across Butina clusters the Spearman correlations vary widely (both signs),
-   confirming that raw docking data require per-cluster post-processing.
+1. each tool's **docstring** repeats the question's natural phrasing (EN + RU) — the docstring is
+   what `ToolRetrieverAgent` / `ToolReranker` embed, so it *is* the routing spec;
+2. each tool returns **`metadata.next_tools`** (plus `metadata.question` and
+   `metadata.next_tools_reason`) naming the sibling tools of the same question, which the
+   Orchestrator LLM reads directly out of the result JSON. `spearman_correlations` also returns
+   `metadata.next_question` pointing from step 1 to step 2.
 
-7. **When a strong docking↔LD50 correlation does appear, does it prove a mechanism?**
-   Not necessarily. For homologous aliphatic carboxylic acids the correlation is driven by a
-   *hidden variable* — logP (logP↔LD50 ρ ≈ 0.9) — not specific binding. A sobering caution for
-   "explainable" toxicology.
+### Step 1 — Is antitarget affinity related to acute toxicity? (molecular-initiating events)
 
-8. **What resource does the work contribute?**
-   A public dataset of 12 654 compounds × 44 antitarget docking scores + mouse-intravenous pLD50
-   (556 776 scores) for mechanism-aware acute-toxicity modeling.
+Ask (RU): «Есть ли зависимость между аффинностями к антитаргетам и острой токсичностью мышей?»
+или AOP-формулировка: «Какие молекулярно-инициирующие события могут коррелировать с острой токсичностью?»
 
-**Bottom line.** Antitarget interaction profiles *are* informative, mechanism-aware descriptors
-for acute toxicity — but only within a properly filtered chemical space, and correlations must be
-interpreted carefully (cluster-wise, watching for confounders like logP).
+Routes to: `antitarget_dataset_overview` → `antitarget_ld50_association` → `binders_vs_nonbinders` →
+`spearman_correlations` (`protein_panel` for target names).
 
----
+Expected synthesised conclusion: the link is real but **non-linear**. Strong binders are
+significantly *more* toxic than non-binders (Mann–Whitney p<0.05, median pLD50 diff 0.38 raw /
+0.70 after NIH+Brenk), and the top-5 associated antitargets — hERG/KCNH2, AVPR1A, CACNA1C,
+KCNQ1, EDNRA — are **all cardiovascular**, which is mechanistically coherent. **But** the raw
+continuous docking-score↔pLD50 correlation is weak (Spearman +0.2…−0.3), so a single docking
+score does not predict toxicity — interpretation must be per chemical cluster.
 
-## Part B — Questions the agent should answer (via this MCP)
+> ⚠️ `spearman_correlations` used to read as "no relationship" when called alone. It now
+> **recomputes the categorical result inside the same call** and returns it as
+> `answer.categorical_check` — real numbers, not a prose cross-reference: Mann–Whitney U on
+> binders vs non-binders (n, medians, `median_diff`, `p_value`, `significant`), the top-5
+> antitargets by binder-subset median pLD50, and the non-binder subset. Its `finding` is generated
+> from those numbers and opens with the verdict, e.g.:
+>
+> > *"A relationship between antitarget affinity and acute toxicity IS present in this dataset, but
+> > it is CATEGORICAL (binds / does not bind), not linear in the docking score: binders are more
+> > toxic by +0.38 pLD50 units (p=4.86e-132), and the most associated antitargets are KCNH2,
+> > AVPR1A, CACNA1C, KCNQ1, EDNRA. …"*
+>
+> Cost of the inline check: ~6 ms (Mann–Whitney 1.7 ms + antitarget ranking 4.6 ms) on top of a
+> ~0.26 s call — no clustering is involved. The full set is still the right way to ask the
+> question; the categorical tools (`binders_vs_nonbinders`, `antitarget_ld50_association`) carry
+> the positive result with figures.
 
-Ask CoScientist (or any MCP client) these. Each maps to one tool and yields the answer above.
+### Step 2 — Does a strong affinity↔LD50 correlation prove a mechanism?
 
-**One question to reproduce everything:**
+Ask (RU): «Если наблюдается сильная корреляция между аффинностью и LD50, доказывает ли это наличие механизма?»
+
+Routes to: `cluster_correlation_heatmap` → `reproduce_figure8_examples` → `logp_confounder_analysis`
+
+Expected synthesised conclusion: **not necessarily.** Correlations vary markedly between chemical
+clusters (`cluster_correlation_heatmap`). For characterised molecules (soman, anisodamine,
+butaperazine, …) a *known* target ranks among the strongest binders, so there the correlation
+**is** mechanistically grounded (`reproduce_figure8_examples`). But for aliphatic carboxylic acids
+a strong docking↔LD50 correlation is explained by a **hidden variable** — logP (Spearman ρ≈0.9
+with pLD50), not target binding (`logp_confounder_analysis`). So a correlation alone does not
+establish a mechanism; distinguish mechanistically-grounded cases from confounded ones.
+
+## Alternative: one "reproduce everything" request (sanity check; retrieves poorly)
+
 > "Using the tox-antitargets tools, reproduce all the findings of Nikitin et al. 2025 linking
 > antitargets to rodent acute toxicity, and state each conclusion with the supporting numbers."
-> → `reproduce_claims` (11 conclusions + numbers) / `reproduce_all` (headline values vs paper).
 
-**Per-finding questions:**
+This should route to `antitarget_reproduce_claims` (all 11 conclusions + numbers) and/or
+`antitarget_reproduce_all` (the headline values vs the paper). The `answer.narrative` field is the
+full reproduced summary.
 
-| # | Question | Tool | Expected answer |
-|---|----------|------|-----------------|
-| 1 | What does the dataset contain and what is the pLD50 range? | `dataset_overview` | 12 654 × 44 (556 776 scores); pLD50 0.77–7.89 |
-| 2 | Is any antitarget's docking distribution anomalous, and why? | `protein_affinity_profiles` | CHRM2 highest median (~−4); small active site |
-| 3 | How toxic are compounds that bind no antitarget? | `antitarget_ld50_association` | Non-binders are the least toxic subset |
-| 4 | Which antitargets are most associated with toxicity, and what unites them? | `antitarget_ld50_association` | KCNH2, AVPR1A, CACNA1C, KCNQ1, EDNRA — all cardiovascular |
-| 5 | Are antitarget binders significantly more toxic than non-binders? | `binders_vs_nonbinders` | Yes; p<0.05, median diff ~0.38 (raw) |
-| 6 | How do NIH+Brenk filters change that difference? | `binders_vs_nonbinders(apply_filters=true)` + `apply_medchem_filters` | 12 654→5 392; diff doubles 0.38→0.70 |
-| 7 | Can inverse docking recover known mechanisms (soman, anisodamine, …)? | `reproduce_figure8_examples` | Known targets rank among strongest binders |
-| 8 | How strong is the raw docking↔pLD50 correlation across the panel? | `spearman_correlations` | ρ ≈ +0.2 to −0.3 — almost none |
-| 9 | Do those correlations differ between chemical clusters? | `cluster_correlation_heatmap` | Vary markedly → per-cluster analysis needed |
-| 10 | For aliphatic acids, is the docking–toxicity link a real mechanism? | `logp_confounder_analysis` | No — logP confounder (ρ≈0.9) |
-| 11 | How structurally diverse is the dataset? | `butina_clustering` | ~9 665 clusters, mostly singletons |
+## Per-assertion questions
 
-**Open-ended questions the tools also enable** (beyond strict reproduction):
+Ask these individually to reproduce each conclusion; each maps to one tool.
 
-| Question | Tool |
-|----------|------|
-| "What antitargets does *<SMILES or name>* bind, and what's its likely mechanism of action?" | `inverse_docking_profile` |
-| "Is *<molecule>* in the dataset, and how toxic is it (pLD50)?" | `inverse_docking_profile` |
-| "List the 44-protein safety panel and which are cardiovascular." | `protein_panel` |
-| "Show the physicochemical property profile of the dataset." | `physicochemical_properties` |
-| "Visualise the chemical space coloured by toxicity." | `chemical_space_tsne` |
+| # | Question to ask CoScientist | Tool | Reproduced assertion |
+|---|---|---|---|
+| C1 | What does the LD50-antitarget dataset contain and what is the pLD50 range? | `antitarget_dataset_overview` | 12,654 ligands × 44 antitargets (556,776 scores); pLD50 0.77–7.89. |
+| C2 | Is any antitarget's docking-score distribution anomalous, and why? | `protein_affinity_profiles` | CHRM2 has the highest median (~−4, small active site); others −6 to −8. |
+| C3 | How toxic are compounds that bind no antitarget? | `antitarget_ld50_association` | Non-binders are the least toxic subset. |
+| C4 | Which antitargets are most associated with acute toxicity, and what unites them? | `antitarget_ld50_association` | hERG/KCNH2, AVPR1A, CACNA1C, KCNQ1, EDNRA — all cardiovascular. |
+| C5 | Are antitarget binders significantly more toxic than non-binders (raw data)? | `binders_vs_nonbinders` | Yes — Mann–Whitney p<0.05, median diff ~0.38. |
+| C6 | How do NIH+Brenk filters change the binder/non-binder difference? | `binders_vs_nonbinders(apply_filters=True)` + `apply_medchem_filters` | 12,654→5,392 here (paper 5,391, one molecule of RDKit-version difference); diff doubles 0.38→0.70 (p<0.05). |
+| C7 | Can inverse docking recover the known mechanisms of soman, anisodamine, etc.? | `reproduce_figure8_examples` | Known targets rank among the strongest binders. |
+| C8 | How strong is the raw docking-score↔pLD50 correlation across the panel? | `spearman_correlations` | ρ ≈ +0.2 to −0.3 — almost no *continuous/monotone* association in raw data (the same call's `categorical_check` shows the categorical association is significant). |
+| C9 | Do those correlations differ between chemical clusters? | `cluster_correlation_heatmap` | They vary markedly → per-cluster post-processing needed. |
+| C10 | For aliphatic carboxylic acids, is the docking-toxicity link a real mechanism? | `logp_confounder_analysis` | No — logP↔pLD50 ρ≈0.9 is a hidden-variable confounder. |
+| C11 | How structurally diverse is the dataset? | `butina_clustering` | ~8,258 clusters here at Tanimoto 0.65 (paper ~9,665), ~79% singletons → high diversity; the count is fingerprint-version sensitive, the conclusion is not. |
 
----
+## Keeping LLM synthesis faithful (optional system prompt)
 
-## Part C — From numbers to conclusions
-
-Tools return numbers; the paper's *conclusions* are an interpretation of them. The agent (in
-CoScientist, the `OrchestratorAgent`/LLM after `ExperimentAgent`→FEDOT.MAS calls the tools) turns
-numbers into statements. To keep that faithful, every tool returns a `finding` line, and
-`reproduce_claims` returns a `reproduced_statement` (the paper's claim restated with our numbers).
-Relay those for exact reproduction, or synthesise from `evidence` under a constraining system
-prompt, e.g.:
+If you prefer the agent to *write* the conclusions (rather than relay `reproduced_statement`),
+constrain it so it cannot drift from the data:
 
 > "You are reproducing Nikitin et al. 2025. Call the tox-antitargets tools, then state each
-> conclusion using only the returned numbers. Do not introduce any value or claim not present in
-> the tool output. Where a tool returns a `finding`/`reproduced_statement`, treat it as the
-> authoritative interpretation. Report any value that differs from the paper and by how much."
-
-`reproduce_paper.py` in the repo root runs exactly this loop with an OpenRouter key (no full
-CoScientist stack needed).
+> conclusion **using only the returned numbers**. Do not introduce values or claims not present
+> in the tool output. Where a tool returns a `finding` or `reproduced_statement`, treat it as the
+> authoritative interpretation. Report any value that differs from the paper and say by how much."
