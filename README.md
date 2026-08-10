@@ -59,6 +59,8 @@ siblings, which an LLM orchestrator reads straight out of the result JSON.
 
 `spearman_correlations` additionally returns `metadata.next_question`, pointing from step 1 to
 step 2. See [`REPRODUCTION_QUESTIONS.md`](./REPRODUCTION_QUESTIONS.md) for the full scenario.
+Each recommended prompt explicitly asks the agent to return every generated figure artifact with
+its kind and SHA-256, rather than returning an orchestration log or a bare confirmation.
 
 ### Reproducing the paper's *assertions* (not just numbers)
 
@@ -69,7 +71,8 @@ with our numbers) plus the supporting `evidence`. In CoScientist the numbers flo
 `ExperimentAgent` (FEDOT.MAS runs the tool) → `OrchestratorAgent` (LLM writes the conclusion);
 the `finding` / `reproduced_statement` fields keep that synthesis faithful. See
 [`REPRODUCTION_QUESTIONS.md`](./REPRODUCTION_QUESTIONS.md) for the exact question list to ask
-CoScientist (one per assertion, plus a single "reproduce everything" prompt).
+CoScientist. The bulk "reproduce everything" tool is retained only as an audit fallback, not as
+the recommended user flow.
 
 Each tool returns `{"answer": ..., "metadata": ...}`. Figures are saved as PNG to a local
 artifacts directory (`TOX_ARTIFACTS_DIR`) or, if S3 is configured, uploaded and returned as

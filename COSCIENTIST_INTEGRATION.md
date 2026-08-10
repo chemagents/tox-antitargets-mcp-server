@@ -59,7 +59,9 @@ That's it. The 17 tools (`antitarget_dataset_overview`, `antitarget_ld50_associa
 `apply_medchem_filters`, `spearman_correlations`, `butina_clustering`, `inverse_docking_profile`,
 `interpret_toxicity_link`, `antitarget_reproduce_all`, `antitarget_reproduce_claims`, …) are now available to the agents.
 See [`REPRODUCTION_QUESTIONS.md`](./REPRODUCTION_QUESTIONS.md) for example prompts — including the
-**toxicity-case** scenario, which `interpret_toxicity_link` answers in a single call.
+recommended two-question **toxicity-case** scenario. `interpret_toxicity_link` remains available
+as an audit/convenience summary, but it must not replace those questions and their evidence
+artifacts in an article-reproduction report.
 
 ---
 

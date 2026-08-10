@@ -15,19 +15,17 @@ The control result the spec asks for:
 > they are driven by hidden variables ... compared with the paper's conclusions, including the
 > analysis of the aliphatic carboxylic-acid cluster and the influence of lipophilicity."*
 
-**One query → one clean answer (recommended).** Ask this and relay the tool's `answer.summary`:
+Append this explicit output request to **every recommended question in this document**, including
+the drill-down questions below:
 
-> "Give an interpretable description of how antitarget binding affinities relate to acute rodent
-> toxicity (LD50): where are the correlations mechanistically justified, and where are they driven
-> by hidden variables such as lipophilicity (logP) in aliphatic carboxylic acids?"
+> "Answer the scientific question directly. Return every non-null figure artifact produced by the
+> tools (URL or path, kind and SHA-256) alongside the supporting numbers. Do not return an internal
+> task list or merely say that the paper's conclusion was confirmed."
 
-→ routes to **`interpret_toxicity_link`**, which returns in a single call the weak raw panel-wide
-correlation, the real profile-level association, the **mechanistically-justified** cases (a
-molecule's known target is among its strongest binders), and the **hidden-variable** case
-(aliphatic acids, logP↔pLD50 ρ≈0.9). That is the whole spec deliverable in one user-facing
-paragraph — no orchestration fragmentation.
-
-**Or drive it with targeted queries** (each maps to one tool — good for drill-down / verification):
+**Use several scientific questions, not one instruction to confirm or reproduce the paper.** The
+recommended two-question sequence is specified below under
+[`Recommended: sequential natural-question scenario`](#recommended-sequential-natural-question-scenario).
+For additional drill-down, ask these targeted questions:
 
 | # | Natural-language query | Tool(s) |
 |---|---|---|
@@ -42,11 +40,14 @@ Query 1 is the reformulated "raw correlation" prompt — it leads with the datas
 spec** — the *hidden-variable* (logP) and *mechanistic* halves respectively; do not omit them (the
 original 3-query set covered neither the logP confounder nor a clean mechanistic case).
 
-**Avoid the broad "reproduce everything" prompt here.** A general "reproduce all findings" request
+**Avoid both the broad "reproduce everything" prompt and the one-call summary as the primary
+workflow.** A general "reproduce all findings" request
 makes CoScientist's `PlannerAgent` decompose the task and emit a `TaskTracker` progress log
 ("TASK-1 DONE …") as the answer — internal orchestration state, not a scientific reply, and it tends
-to cover only a few analyses. Prefer `interpret_toxicity_link` (above) or the targeted queries. That
-task-log leak is a CoScientist orchestrator-prompt behaviour, **not this server** — see
+to cover only a few analyses. The `interpret_toxicity_link` tool remains an audit/convenience
+summary, but must not replace the sequential questions and their returned evidence artifacts in a
+validation report. That task-log leak is a CoScientist orchestrator-prompt behaviour, **not this
+server** — see
 [`COSCIENTIST_INTEGRATION.md`](./COSCIENTIST_INTEGRATION.md#user-facing-output-task-log-leak).
 
 ---
@@ -170,12 +171,10 @@ Ask these individually to reproduce each conclusion; each maps to one tool.
 | C10 | For aliphatic carboxylic acids, is the docking-toxicity link a real mechanism? | `logp_confounder_analysis` | No — logP↔pLD50 ρ≈0.9 is a hidden-variable confounder. |
 | C11 | How structurally diverse is the dataset? | `butina_clustering` | ~8,258 clusters here at Tanimoto 0.65 (paper ~9,665), ~79% singletons → high diversity; the count is fingerprint-version sensitive, the conclusion is not. |
 
-## Keeping LLM synthesis faithful (optional system prompt)
+## Answer contract
 
-If you prefer the agent to *write* the conclusions (rather than relay `reproduced_statement`),
-constrain it so it cannot drift from the data:
-
-> "You are reproducing Nikitin et al. 2025. Call the tox-antitargets tools, then state each
-> conclusion **using only the returned numbers**. Do not introduce values or claims not present
-> in the tool output. Where a tool returns a `finding` or `reproduced_statement`, treat it as the
-> authoritative interpretation. Report any value that differs from the paper and say by how much."
+For every question, lead with a direct answer to that question, then give the computed evidence and
+the returned figure artifacts. Distinguish recomputed results from paper reference values, surface
+every documented divergence, and never substitute planner/task-tracker output for the scientific
+answer. `finding` and `reproduced_statement` are evidence-backed inputs, not a request to emit a
+generic "confirmed" verdict.

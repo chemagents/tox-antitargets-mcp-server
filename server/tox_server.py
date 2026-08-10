@@ -41,6 +41,12 @@ logger = logging.getLogger(__name__)
 
 mcp = FastMCP("ToxAntitargets")
 
+ARTIFACT_OUTPUT_POLICY = (
+    "Return every non-null figure artifact from this question to the user together with its "
+    "URL or path, kind, and SHA-256; do not replace the scientific answer with an internal task "
+    "log."
+)
+
 # --------------------------------------------------------------------------- #
 # Routing sets for the two-step validation scenario.
 # These are the AGENT-VISIBLE tool names (see the `name=` args of @mcp.tool below)
@@ -82,11 +88,12 @@ def _chain(step: int, self_name: str) -> dict:
         "question": Q1_QUESTION if step == 1 else Q2_QUESTION,
         "next_tools": [t for t in tools if t != self_name],
         "next_tools_reason": _STEP_REASON[step],
+        "artifact_output_policy": ARTIFACT_OUTPUT_POLICY,
     }
 
 
 def _mw_finding(res: dict, thr: float, subset: str) -> str:
-    """State the categorical binder/non-binder result using only `res`'s own numbers."""
+    """Describe the categorical result with its computed supporting measurements."""
     if "p_value" not in res:
         return (f"{subset}: no binder/non-binder comparison is possible at threshold {thr} kcal/mol "
                 f"({res['n_binders']} binders / {res['n_nonbinders']} non-binders).")
@@ -739,13 +746,15 @@ def protein_panel() -> dict:
 
 @mcp.tool()
 def interpret_toxicity_link() -> dict:
-    """Interpretable description of how antitarget binding affinity relates to acute toxicity.
+    """Audit/convenience summary of antitarget affinity versus acute toxicity.
 
     Distinguishes correlations that are MECHANISTICALLY JUSTIFIED (a molecule's known target is
     among its strongest binders) from those driven by a HIDDEN VARIABLE (lipophilicity / logP in
     aliphatic carboxylic acids). Reproduces the paper's interpretive conclusions (sections 3.3-3.6)
-    as a single user-facing narrative (`answer.summary`) plus the supporting numbers. This answers
-    the toxicity-case control result in one call. Runs Butina clustering (~15s).
+    as an aggregate narrative (`answer.summary`) plus the supporting numbers. This tool is a
+    regression/audit fallback; article reproduction should use the sequential natural questions
+    in REPRODUCTION_QUESTIONS.md and return their evidence artifacts. Runs Butina clustering
+    (~15s).
     """
     ds = load_dataset()
     res = claims.interpret_link(ds)
@@ -759,6 +768,7 @@ def interpret_toxicity_link() -> dict:
     return {
         "answer": res,
         "metadata": {"figures": figures,
+                     "artifact_output_policy": ARTIFACT_OUTPUT_POLICY,
                      "reference": "Nikitin et al., Pharmaceutics 2025, 17, 1573 (sections 3.3-3.6)"},
     }
 

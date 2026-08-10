@@ -47,3 +47,11 @@ def test_python_function_names_are_unchanged():
 
 def test_tool_count_is_stable():
     assert len(_tools()) == 17
+
+
+def test_question_chain_requires_user_facing_artifacts():
+    chain = srv._chain(1, "antitarget_dataset_overview")
+    assert chain["next_tools"]
+    assert "URL or path" in chain["artifact_output_policy"]
+    assert "SHA-256" in chain["artifact_output_policy"]
+    assert "task log" in chain["artifact_output_policy"]
