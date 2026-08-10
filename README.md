@@ -44,21 +44,23 @@ etc. still exist. The table below lists the **wire names** the agent must call.
 | `antitarget_reproduce_claims` | all | the paper's 11 **conclusions**, each restated with reproduced numbers |
 | `interpret_toxicity_link` | §3.3–3.6 | one narrative: mechanistically justified vs hidden-variable (logP) correlations |
 
-### Routing: one question → a *set* of tools
+### Routing: two questions → two forward-only tool sequences
 
 The intended usage is a **sequence of natural scientific questions**, not one "reproduce the
-paper" request. Each question must retrieve a *set* of tools, so every tool in a set (a) repeats
-the question's natural phrasing (EN + RU) in its docstring — the docstring is what the
-`ToolRetrieverAgent` / `ToolReranker` embed — and (b) returns `metadata.next_tools` naming its
-siblings, which an LLM orchestrator reads straight out of the result JSON.
+paper" request. Each question starts at one canonical entry tool. The tools repeat the question's
+natural phrasing (EN + RU) in their docstrings for retrieval, then each nonterminal result returns
+only its immediate successor in `metadata.next_tools`. This makes the route deterministic and
+prevents reciprocal loops or skipped evidence.
 
-| Question | Tool set (`metadata.next_tools`) |
+| Question | Canonical tool order |
 |---|---|
-| Is antitarget affinity related to acute toxicity in mice? / Which molecular initiating events correlate with acute toxicity? | `antitarget_dataset_overview` → `antitarget_ld50_association` → `binders_vs_nonbinders` → `spearman_correlations` (+ `protein_panel`) |
+| Is antitarget affinity related to acute toxicity in mice? / Which molecular initiating events correlate with acute toxicity? | `antitarget_dataset_overview` → `antitarget_ld50_association` → `binders_vs_nonbinders` → `spearman_correlations` → `protein_panel` |
 | Does a strong affinity↔LD50 correlation prove a mechanism? | `cluster_correlation_heatmap` → `reproduce_figure8_examples` → `logp_confounder_analysis` |
 
-`spearman_correlations` additionally returns `metadata.next_question`, pointing from step 1 to
-step 2. See [`REPRODUCTION_QUESTIONS.md`](./REPRODUCTION_QUESTIONS.md) for the full scenario.
+The terminal `protein_panel` result has `next_tools=[]` and opens question 2 through
+`metadata.next_question.entry_tool=cluster_correlation_heatmap`. The terminal
+`logp_confounder_analysis` result has `next_tools=[]` and `workflow_status=completed`. See
+[`REPRODUCTION_QUESTIONS.md`](./REPRODUCTION_QUESTIONS.md) for the full scenario.
 Each recommended prompt explicitly asks the agent to return every generated figure artifact with
 its kind and SHA-256, rather than returning an orchestration log or a bare confirmation.
 

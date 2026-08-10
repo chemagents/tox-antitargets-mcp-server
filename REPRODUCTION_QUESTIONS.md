@@ -25,20 +25,15 @@ the drill-down questions below:
 **Use several scientific questions, not one instruction to confirm or reproduce the paper.** The
 recommended two-question sequence is specified below under
 [`Recommended: sequential natural-question scenario`](#recommended-sequential-natural-question-scenario).
-For additional drill-down, ask these targeted questions:
+The article-reproduction workflow itself consists of exactly these two questions:
 
-| # | Natural-language query | Tool(s) |
+| # | Natural-language question | Canonical tool order |
 |---|---|---|
-| 1 | "Describe the antitarget–LD50 dataset, then assess how strongly antitarget affinities (docking scores) correlate with acute toxicity across the whole 44-protein panel." | `antitarget_dataset_overview` → `spearman_correlations` |
-| 2 | "Do these docking–toxicity correlations differ between chemical clusters?" | `cluster_correlation_heatmap` |
-| 3 | "For the aliphatic carboxylic-acid cluster, is the docking–toxicity link a real mechanism or a hidden-variable (lipophilicity) effect?" | `logp_confounder_analysis` |
-| 4 | "Take soman / anisodamine (or any SMILES): which antitargets does it bind, and is that its known mechanism of action?" | `inverse_docking_profile` |
-| 5 | "Is any antitarget's docking-score distribution anomalous, and why?" | `protein_affinity_profiles` |
+| 1 | "Is there a relationship between antitarget affinity and acute toxicity in mice? Which molecular initiating events correlate with acute toxicity?" | `antitarget_dataset_overview` → `antitarget_ld50_association` → `binders_vs_nonbinders` → `spearman_correlations` → `protein_panel` |
+| 2 | "If a strong affinity–LD50 correlation is observed, does that prove a mechanism?" | `cluster_correlation_heatmap` → `reproduce_figure8_examples` → `logp_confounder_analysis` |
 
-Query 1 is the reformulated "raw correlation" prompt — it leads with the dataset so the agent calls
-`antitarget_dataset_overview` first, then `spearman_correlations`. **Queries 3 and 4 are what actually close the
-spec** — the *hidden-variable* (logP) and *mechanistic* halves respectively; do not omit them (the
-original 3-query set covered neither the logP confounder nor a clean mechanistic case).
+The first tool in each row is the only entry point for that question. Direct calls to individual
+tools remain useful for diagnostics, but they are not the article-reproduction route.
 
 **Avoid both the broad "reproduce everything" prompt and the one-call summary as the primary
 workflow.** A general "reproduce all findings" request
@@ -89,14 +84,15 @@ step. This is what to feed CoScientist. The goal is an interpretable account of 
 antitarget-affinity ↔ acute-toxicity relationship, distinguishing mechanistically-grounded
 correlations from ones driven by hidden variables.
 
-Two mechanisms make the *set* actually get retrieved and chained:
+Two mechanisms make each sequence get retrieved and chained:
 
 1. each tool's **docstring** repeats the question's natural phrasing (EN + RU) — the docstring is
    what `ToolRetrieverAgent` / `ToolReranker` embed, so it *is* the routing spec;
-2. each tool returns **`metadata.next_tools`** (plus `metadata.question` and
-   `metadata.next_tools_reason`) naming the sibling tools of the same question, which the
-   Orchestrator LLM reads directly out of the result JSON. `spearman_correlations` also returns
-   `metadata.next_question` pointing from step 1 to step 2.
+2. each nonterminal tool returns one immediate successor in **`metadata.next_tools`** (plus
+   `metadata.question`, the full `metadata.canonical_tool_order`, and status fields). It never
+   returns a predecessor or skips a sibling. The terminal `protein_panel` call has
+   `next_tools=[]` and opens step 2 through `metadata.next_question.entry_tool`; the terminal
+   `logp_confounder_analysis` call has `next_tools=[]` and `workflow_status=completed`.
 
 ### Step 1 — Is antitarget affinity related to acute toxicity? (molecular-initiating events)
 
@@ -104,7 +100,7 @@ Ask (RU): «Есть ли зависимость между аффинностя
 или AOP-формулировка: «Какие молекулярно-инициирующие события могут коррелировать с острой токсичностью?»
 
 Routes to: `antitarget_dataset_overview` → `antitarget_ld50_association` → `binders_vs_nonbinders` →
-`spearman_correlations` (`protein_panel` for target names).
+`spearman_correlations` → `protein_panel`.
 
 Expected synthesised conclusion: the link is real but **non-linear**. Strong binders are
 significantly *more* toxic than non-binders (Mann–Whitney p<0.05, median pLD50 diff 0.38 raw /

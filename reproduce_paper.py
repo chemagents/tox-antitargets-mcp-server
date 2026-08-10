@@ -7,7 +7,7 @@ those numbers. It demonstrates the exact "numbers -> LLM -> assertions" loop CoS
 performs at runtime.
 
 Usage:
-    export OPENROUTER_API_KEY=sk-or-...            # do NOT paste the key into chat
+    export OPENROUTER_API_KEY=sk-or-...            # do NOT paste the key into source or logs
     uv run python reproduce_paper.py               # calls the LLM
     uv run python reproduce_paper.py --dry-run     # just print the prompt (no key, no call)
     TOX_SYNTH_MODEL=qwen/qwen3-235b-a22b-2507 uv run python reproduce_paper.py

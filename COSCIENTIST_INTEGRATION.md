@@ -119,7 +119,7 @@ exactly — see [`README.md`](./README.md#reproduction-fidelity) (this is Fig. 5
 ## Note on the top-level orchestrator (optional)
 
 The execution path that calls the tools — `ExperimentAgent` → FEDOT.MAS — works as shown above. In
-some runs the top-level `OrchestratorAgent` replies conversationally instead of driving straight to
+some runs the top-level `OrchestratorAgent` returns prose instead of driving straight to
 tool execution; that is an LLM-prompting characteristic of the orchestrator (tunable via its prompt
 / planner settings) and is independent of this server. Calling the FEDOT.MAS path directly, or
 phrasing the query as a concrete analysis task, reliably triggers the tool calls.

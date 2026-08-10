@@ -7,11 +7,10 @@ Toxicity" (Pharmaceutics 2025, 17, 1573) from the openly published dataset.
 Every tool returns a dict with an ``answer`` (numbers / findings) and
 ``metadata`` (figure artifact links and a comparison with the paper's values).
 
-The intended usage is a *sequence* of natural scientific questions, each of which retrieves a
-*set* of tools (see ``REPRODUCTION_QUESTIONS.md``). The two validation questions and their tool
-sets are declared below as ``STEP1_TOOLS`` / ``STEP2_TOOLS``; every tool in a set repeats the
-question phrasing in its docstring (for the RAG retriever) and returns ``metadata.next_tools``
-naming its siblings (for the LLM orchestrator, which reads the result JSON).
+The intended usage is a *sequence* of natural scientific questions (see
+``REPRODUCTION_QUESTIONS.md``). Each question has one canonical, forward-only tool order. Every
+nonterminal tool returns only its immediate successor in ``metadata.next_tools``; the final tool
+of question 1 opens question 2, and the final tool of question 2 closes the workflow.
 
 Three tool names collided with the heracleum-tox and cannabis-biopesticide servers; they are
 exposed to the agent under ``antitarget_``-prefixed names via ``@mcp.tool(name=...)``, while the
@@ -42,16 +41,17 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP("ToxAntitargets")
 
 ARTIFACT_OUTPUT_POLICY = (
-    "Return every non-null figure artifact from this question to the user together with its "
-    "URL or path, kind, and SHA-256; do not replace the scientific answer with an internal task "
-    "log."
+    "Lead with a direct scientific answer grounded in the returned numbers. Return every "
+    "non-null artifact from this question to the user together with its URL or path, kind, and "
+    "SHA-256. Do not substitute a task log, orchestration status, or bare confirmation for the "
+    "scientific answer."
 )
 
 # --------------------------------------------------------------------------- #
-# Routing sets for the two-step validation scenario.
+# Canonical routes for the two-question validation scenario.
 # These are the AGENT-VISIBLE tool names (see the `name=` args of @mcp.tool below)
-# and are echoed back in `metadata.next_tools` so an LLM orchestrator reading the
-# result JSON knows the question is not answered by a single call.
+# and define deterministic forward-only sequences. `metadata.next_tools` contains
+# at most the immediate successor, never every sibling and never a predecessor.
 # --------------------------------------------------------------------------- #
 Q1_QUESTION = ("Is there a relationship between antitarget affinity and acute toxicity in mice? / "
                "Which molecular initiating events correlate with acute toxicity? / "
@@ -73,23 +73,48 @@ STEP2_TOOLS = [
     "logp_confounder_analysis",
 ]
 
-_STEP_REASON = {
-    1: "Same question as the sibling tools below; call all of them before concluding "
-       "(categorical evidence + continuous caveat + target names).",
-    2: "Same question as the sibling tools below; a single tool answers only one third of it "
-       "(cluster variability, mechanistically grounded case, confounded case).",
-}
-
-
 def _chain(step: int, self_name: str) -> dict:
-    """Machine-readable chaining hint for the orchestrator (see module docstring)."""
+    """Return the deterministic forward-only route from ``self_name``.
+
+    A one-element ``next_tools`` list makes resume/retry behaviour unambiguous: a caller can
+    never jump over an evidence-producing sibling or be sent back into a reciprocal cycle.
+    """
+    if step not in (1, 2):
+        raise ValueError(f"Unknown reproduction question: {step}")
     tools = STEP1_TOOLS if step == 1 else STEP2_TOOLS
-    return {
+    try:
+        position = tools.index(self_name)
+    except ValueError as exc:
+        raise ValueError(f"Tool {self_name!r} is not in question {step}") from exc
+
+    terminal = position == len(tools) - 1
+    next_tools = [] if terminal else [tools[position + 1]]
+    route = {
         "question": Q1_QUESTION if step == 1 else Q2_QUESTION,
-        "next_tools": [t for t in tools if t != self_name],
-        "next_tools_reason": _STEP_REASON[step],
+        "canonical_tool_order": list(tools),
+        "current_tool_position": position + 1,
+        "next_tools": next_tools,
+        "next_tools_reason": (
+            f"Continue this question with its immediate next tool: {next_tools[0]}."
+            if next_tools else
+            "This is the terminal tool for the current question."
+        ),
+        "terminal": terminal,
+        "question_status": "completed" if terminal else "in_progress",
         "artifact_output_policy": ARTIFACT_OUTPUT_POLICY,
     }
+    if terminal and step == 1:
+        route["workflow_status"] = "continue_with_next_question"
+        route["next_question"] = {
+            "question": Q2_QUESTION,
+            "entry_tool": STEP2_TOOLS[0],
+            "tools": list(STEP2_TOOLS),
+        }
+    elif terminal:
+        route["workflow_status"] = "completed"
+    else:
+        route["workflow_status"] = "in_progress"
+    return route
 
 
 def _mw_finding(res: dict, thr: float, subset: str) -> str:
@@ -127,8 +152,9 @@ def dataset_overview() -> dict:
     mice?" / "Which molecular initiating events correlate with acute toxicity?" /
     «Есть ли зависимость между аффинностями к антитаргетам и острой токсичностью мышей?» /
     «Какие молекулярно-инициирующие события могут коррелировать с острой токсичностью?».
-    That question needs the whole set: also call antitarget_ld50_association,
-    binders_vs_nonbinders, spearman_correlations (protein_panel for target names).
+    Canonical question-1 order: antitarget_dataset_overview, antitarget_ld50_association,
+    binders_vs_nonbinders, spearman_correlations, protein_panel. Start here, then follow only the
+    immediate successor returned in metadata.next_tools.
     """
     ds = load_dataset()
     fig = plotting.plot_pld50_kde(ds)
@@ -287,8 +313,8 @@ def antitarget_ld50_association(
     affinity related to acute toxicity in mice?" / «Какие молекулярно-инициирующие события могут
     коррелировать с острой токсичностью?» / «Есть ли зависимость между аффинностями к антитаргетам
     и острой токсичностью мышей?».
-    Same-question set: antitarget_dataset_overview, binders_vs_nonbinders, spearman_correlations,
-    protein_panel.
+    Canonical question-1 order: antitarget_dataset_overview, antitarget_ld50_association,
+    binders_vs_nonbinders, spearman_correlations, protein_panel.
     """
     ds = load_dataset()
     thr = _thr(threshold)
@@ -369,8 +395,8 @@ def binders_vs_nonbinders(
     toxicity in mice?" / «Есть ли зависимость между аффинностями к антитаргетам и острой
     токсичностью мышей?» / «Какие молекулярно-инициирующие события могут коррелировать с острой
     токсичностью?».
-    Same-question set: antitarget_dataset_overview, antitarget_ld50_association,
-    spearman_correlations, protein_panel.
+    Canonical question-1 order: antitarget_dataset_overview, antitarget_ld50_association,
+    binders_vs_nonbinders, spearman_correlations, protein_panel.
     """
     ds = load_dataset()
     thr = _thr(threshold)
@@ -439,8 +465,8 @@ def spearman_correlations() -> dict:
     toxicity relationship". Answers the estimator caveat of "Is there a relationship between
     antitarget affinity and acute toxicity in mice?" / «Есть ли зависимость между аффинностями к
     антитаргетам и острой токсичностью мышей?».
-    Same-question set: antitarget_dataset_overview, antitarget_ld50_association,
-    binders_vs_nonbinders, protein_panel. Then cluster_correlation_heatmap.
+    Canonical question-1 order: antitarget_dataset_overview, antitarget_ld50_association,
+    binders_vs_nonbinders, spearman_correlations, protein_panel.
     """
     ds = load_dataset()
     thr = get_settings().binder_threshold
@@ -517,8 +543,7 @@ def spearman_correlations() -> dict:
                              f"the published CSV is post-denoising (positive scores set to 0). "
                              "`answer.categorical_check` is recomputed in this same call so a lone "
                              "call cannot be read as 'no relationship'.",
-                     **_chain(1, "spearman_correlations"),
-                     "next_question": {"question": Q2_QUESTION, "tools": STEP2_TOOLS}},
+                     **_chain(1, "spearman_correlations")},
     }
 
 
@@ -533,8 +558,8 @@ def cluster_correlation_heatmap(
     strong correlation is local, not a law. Answers "If a strong affinity-LD50 correlation is
     observed, does that prove a mechanism?" / «Если наблюдается сильная корреляция между
     аффинностью и LD50, доказывает ли это наличие механизма?».
-    Same-question set: reproduce_figure8_examples (mechanistically grounded case) and
-    logp_confounder_analysis (confounded case). Runs Butina clustering (~15 s).
+    Canonical question-2 order: cluster_correlation_heatmap, reproduce_figure8_examples,
+    logp_confounder_analysis. Runs Butina clustering (~15 s).
     """
     ds = load_dataset()
     cm = science.cluster_correlation_matrix(ds, n_clusters, _tan(tanimoto_threshold),
@@ -573,22 +598,55 @@ def logp_confounder_analysis(
     (the aliphatic carboxylic-acid counter-example). Answers "If a strong affinity-LD50
     correlation is observed, does that prove a mechanism?" / «Если наблюдается сильная корреляция
     между аффинностью и LD50, доказывает ли это наличие механизма?».
-    Same-question set: cluster_correlation_heatmap, reproduce_figure8_examples.
-    Runs Butina clustering (~15 s).
+    Canonical question-2 order: cluster_correlation_heatmap, reproduce_figure8_examples,
+    logp_confounder_analysis. This is the terminal evidence step. Runs Butina clustering (~15 s).
     """
     ds = load_dataset()
     clusters = science.butina_clusters(ds, _tan(tanimoto_threshold), get_settings().morgan_nbits)
     if cluster_rank < 1 or cluster_rank > len(clusters):
-        return {"answer": {"error": f"cluster_rank out of range (1..{len(clusters)})"}, "metadata": {}}
+        route = _chain(2, "logp_confounder_analysis")
+        route.update({
+            "next_tools": [],
+            "next_tools_reason": (
+                f"No successor is available until this tool is retried with cluster_rank in "
+                f"1..{len(clusters)}."
+            ),
+            "retry_tool": "logp_confounder_analysis",
+            "retry_parameters": {"cluster_rank_min": 1, "cluster_rank_max": len(clusters)},
+            "terminal": False,
+            "question_status": "input_error",
+            "workflow_status": "awaiting_retry",
+        })
+        return {
+            "answer": {"error": f"cluster_rank out of range (1..{len(clusters)})"},
+            "metadata": route,
+        }
     cl = clusters[cluster_rank - 1]
     conf = science.logp_confounder(ds, list(cl))
     fig = plotting.plot_logp_heatmap(conf, f"cluster #{cluster_rank}")
 
     rho = conf["logp_vs_pLD50_rho"]
     dock_rhos = [p["logp_vs_dock_rho"] for p in conf["per_protein"] if p["logp_vs_dock_rho"] is not None]
+    route = _chain(2, "logp_confounder_analysis")
     if rho is None:
         finding = (f"logP has no variance in cluster #{cluster_rank} (n={conf['n']}), so the "
                    f"confounder test is undefined here; try another cluster_rank.")
+        route.update({
+            "next_tools": [],
+            "next_tools_reason": (
+                "No successor is available until this tool is retried on a cluster with "
+                "non-constant logP."
+            ),
+            "retry_tool": "logp_confounder_analysis",
+            "retry_parameters": {
+                "cluster_rank_min": 1,
+                "cluster_rank_max": len(clusters),
+                "exclude_cluster_rank": cluster_rank,
+            },
+            "terminal": False,
+            "question_status": "insufficient_variance",
+            "workflow_status": "awaiting_retry",
+        })
     else:
         strength = "strongly" if abs(rho) >= 0.8 else ("moderately" if abs(rho) >= 0.5 else "weakly")
         extra = ""
@@ -605,8 +663,8 @@ def logp_confounder_analysis(
         else:
             finding = (f"In cluster #{cluster_rank} (n={conf['n']}) logP correlates only {strength} "
                        f"with pLD50 (Spearman rho={rho:+.2f}), so logP is not an obvious confounder "
-                       f"here.{extra} Absence of this confounder still does not prove a mechanism - "
-                       f"check reproduce_figure8_examples for direct target evidence.")
+                       f"here.{extra} Absence of this confounder still does not prove a mechanism; "
+                       f"use the direct-target evidence already gathered in the preceding step.")
     return {
         "answer": {"cluster_rank": cluster_rank, "cluster_size": conf["n"],
                    "logp_vs_pLD50_rho": conf["logp_vs_pLD50_rho"],
@@ -615,7 +673,7 @@ def logp_confounder_analysis(
                    "finding": finding},
         "metadata": {"figure": fig,
                      "paper": {"cluster": "aliphatic carboxylic acids", "logp_vs_LD50_rho": 0.92},
-                     **_chain(2, "logp_confounder_analysis")},
+                     **route},
     }
 
 
@@ -678,7 +736,8 @@ def reproduce_figure8_examples() -> dict:
     Answers "If a strong affinity-LD50 correlation is observed, does that prove a mechanism?" /
     «Если наблюдается сильная корреляция между аффинностью и LD50, доказывает ли это наличие
     механизма?».
-    Same-question set: cluster_correlation_heatmap, logp_confounder_analysis.
+    Canonical question-2 order: cluster_correlation_heatmap, reproduce_figure8_examples,
+    logp_confounder_analysis.
     """
     ds = load_dataset()
     results = []
@@ -727,17 +786,27 @@ def protein_panel() -> dict:
     """Reference LOOKUP of the 44 Bowes safety-pharmacology antitargets: gene symbol -> protein
     name (Table S1).
 
-    A dictionary, not an analysis: it computes no statistics and ranks nothing. Call it only to
-    resolve gene symbols such as KCNH2 or CACNA1C into readable protein names. The tools that
-    actually carry the evidence about which antitargets matter for toxicity are
-    antitarget_ld50_association, binders_vs_nonbinders and spearman_correlations.
+    Final target-name resolution step for "Is there a relationship between antitarget affinity
+    and acute toxicity in mice?" / «Есть ли зависимость между аффинностями к антитаргетам и
+    острой токсичностью мышей?». This dictionary computes no association statistic; it resolves
+    gene symbols such as KCNH2 or CACNA1C after the preceding evidence-producing tools.
+    Canonical question-1 order: antitarget_dataset_overview, antitarget_ld50_association,
+    binders_vs_nonbinders, spearman_correlations, protein_panel. This is the terminal lookup step.
     """
     ds = load_dataset()
+    top5_names = [PROTEIN_NAMES.get(p, p) for p in TOP5_ANTITARGETS]
     return {
         "answer": {
             "n_proteins": len(ds.protein_cols),
             "proteins": [{"gene": p, "name": PROTEIN_NAMES.get(p, p)} for p in ds.protein_cols],
             "top5_associated_with_toxicity": TOP5_ANTITARGETS,
+            "finding": (
+                f"The {len(ds.protein_cols)}-target safety-pharmacology panel resolves the "
+                f"paper's five most toxicity-associated antitargets as "
+                + ", ".join(f"{gene} ({name})" for gene, name in zip(TOP5_ANTITARGETS, top5_names))
+                + ". This lookup supplies paper-reference identities only; the preceding "
+                  "association result reports the recomputed ranking and whether it matches."
+            ),
         },
         "metadata": {"orthology": ORTHOLOGY_NOTE, "source": "Bowes et al. 2012, Nat Rev Drug Discov",
                      **_chain(1, "protein_panel")},
@@ -825,7 +894,9 @@ def reproduce_all() -> dict:
                                + (f" NOT reproduced: {', '.join(failed)}." if failed
                                   else " No check failed."))},
         "metadata": {"reference": "Nikitin et al., Pharmaceutics 2025, 17, 1573",
-                     "dataset": "github.com/chemagents/ld50-antitargets"},
+                     "dataset": "github.com/chemagents/ld50-antitargets",
+                     "workflow_status": "audit_fallback",
+                     "artifact_output_policy": ARTIFACT_OUTPUT_POLICY},
     }
 
 
@@ -864,6 +935,8 @@ def reproduce_claims() -> dict:
                            else " (all claims reproduced).")),
         },
         "metadata": {"reference": "Nikitin et al., Pharmaceutics 2025, 17, 1573",
+                     "workflow_status": "audit_fallback",
+                     "artifact_output_policy": ARTIFACT_OUTPUT_POLICY,
                      "usage": "Relay `reproduced_statement` ONLY together with the claim's "
                               "`reproduced` flag, or synthesise from `evidence` guided by "
                               "`paper_assertion`. `narrative` includes the non-reproduced claims "
