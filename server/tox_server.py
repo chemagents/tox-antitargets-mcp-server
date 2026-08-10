@@ -344,6 +344,32 @@ def protein_panel() -> dict:
 
 
 @mcp.tool()
+def interpret_toxicity_link() -> dict:
+    """Interpretable description of how antitarget binding affinity relates to acute toxicity.
+
+    Distinguishes correlations that are MECHANISTICALLY JUSTIFIED (a molecule's known target is
+    among its strongest binders) from those driven by a HIDDEN VARIABLE (lipophilicity / logP in
+    aliphatic carboxylic acids). Reproduces the paper's interpretive conclusions (sections 3.3-3.6)
+    as a single user-facing narrative (`answer.summary`) plus the supporting numbers. This answers
+    the toxicity-case control result in one call. Runs Butina clustering (~15s).
+    """
+    ds = load_dataset()
+    res = claims.interpret_link(ds)
+    settings = get_settings()
+    figures = {"raw_correlation": plotting.plot_spearman(ds)}
+    acid = science.find_aliphatic_acid_cluster(ds, settings.tanimoto_threshold, settings.morgan_nbits)
+    if acid is not None:
+        conf = science.logp_confounder(ds, acid["indices"])
+        figures["hidden_variable_logp"] = plotting.plot_logp_heatmap(
+            conf, f"aliphatic acids (cluster #{acid['rank']})")
+    return {
+        "answer": res,
+        "metadata": {"figures": figures,
+                     "reference": "Nikitin et al., Pharmaceutics 2025, 17, 1573 (sections 3.3-3.6)"},
+    }
+
+
+@mcp.tool()
 def reproduce_all() -> dict:
     """Run the full headline reproduction and compare every value with the paper.
 

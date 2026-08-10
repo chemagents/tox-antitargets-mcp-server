@@ -55,10 +55,11 @@ mechanism-of-action queries, and the `ExperimentAgent` (FEDOT.MAS) calls them by
 CoScientist and this server share a Docker network, register the in-network URL instead:
 `http://tox-antitargets-mcp-server:7331/mcp`.
 
-That's it. The 16 tools (`dataset_overview`, `antitarget_ld50_association`, `binders_vs_nonbinders`,
+That's it. The 17 tools (`dataset_overview`, `antitarget_ld50_association`, `binders_vs_nonbinders`,
 `apply_medchem_filters`, `spearman_correlations`, `butina_clustering`, `inverse_docking_profile`,
-`reproduce_all`, `reproduce_claims`, …) are now available to the agents. See
-[`REPRODUCTION_QUESTIONS.md`](./REPRODUCTION_QUESTIONS.md) for example prompts.
+`interpret_toxicity_link`, `reproduce_all`, `reproduce_claims`, …) are now available to the agents.
+See [`REPRODUCTION_QUESTIONS.md`](./REPRODUCTION_QUESTIONS.md) for example prompts — including the
+**toxicity-case** scenario, which `interpret_toxicity_link` answers in a single call.
 
 ---
 

@@ -89,3 +89,18 @@ def test_butina_high_diversity():
     assert 8000 <= summary["n_clusters"] <= 10500
     assert summary["n_singletons"] / summary["n_clusters"] > 0.75
     assert summary["largest"] < 60
+
+
+@pytest.mark.slow
+def test_interpret_link():
+    from server import claims
+    r = claims.interpret_link(ds)
+    assert "logP" in r["summary"] or "logp" in r["summary"].lower()
+    # mechanistically-justified cases present, at least one known target among the strongest binders
+    assert r["mechanistically_justified_cases"]
+    assert min(m["best_known_target_rank"] for m in r["mechanistically_justified_cases"]) <= 3
+    # hidden-variable (logP) case reproduces the confounder
+    assert r["hidden_variable_case"]["logp_vs_pLD50_rho"] is not None
+    assert r["hidden_variable_case"]["logp_vs_pLD50_rho"] > 0.8
+    # weak raw panel-wide correlation
+    assert r["raw_panel_correlation"]["spearman_median"] < 0

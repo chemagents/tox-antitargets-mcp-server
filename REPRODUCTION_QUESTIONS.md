@@ -10,6 +10,51 @@ has three parts:
 
 ---
 
+## The toxicity case — validation against the technical spec
+
+The control result the spec asks for:
+
+> *"an interpretable description of the link between affinities to undesirable targets and acute
+> toxicity, including cases where the correlations are mechanistically justified and cases where
+> they are driven by hidden variables ... compared with the paper's conclusions, including the
+> analysis of the aliphatic carboxylic-acid cluster and the influence of lipophilicity."*
+
+**One query → one clean answer (recommended).** Ask this and relay the tool's `answer.summary`:
+
+> "Give an interpretable description of how antitarget binding affinities relate to acute rodent
+> toxicity (LD50): where are the correlations mechanistically justified, and where are they driven
+> by hidden variables such as lipophilicity (logP) in aliphatic carboxylic acids?"
+
+→ routes to **`interpret_toxicity_link`**, which returns in a single call the weak raw panel-wide
+correlation, the real profile-level association, the **mechanistically-justified** cases (a
+molecule's known target is among its strongest binders), and the **hidden-variable** case
+(aliphatic acids, logP↔pLD50 ρ≈0.9). That is the whole spec deliverable in one user-facing
+paragraph — no orchestration fragmentation.
+
+**Or drive it with targeted queries** (each maps to one tool — good for drill-down / verification):
+
+| # | Natural-language query | Tool(s) |
+|---|---|---|
+| 1 | "Describe the antitarget–LD50 dataset, then assess how strongly antitarget affinities (docking scores) correlate with acute toxicity across the whole 44-protein panel." | `dataset_overview` → `spearman_correlations` |
+| 2 | "Do these docking–toxicity correlations differ between chemical clusters?" | `cluster_correlation_heatmap` |
+| 3 | "For the aliphatic carboxylic-acid cluster, is the docking–toxicity link a real mechanism or a hidden-variable (lipophilicity) effect?" | `logp_confounder_analysis` |
+| 4 | "Take soman / anisodamine (or any SMILES): which antitargets does it bind, and is that its known mechanism of action?" | `inverse_docking_profile` |
+| 5 | "Is any antitarget's docking-score distribution anomalous, and why?" | `protein_affinity_profiles` |
+
+Query 1 is the reformulated "raw correlation" prompt — it leads with the dataset so the agent calls
+`dataset_overview` first, then `spearman_correlations`. **Queries 3 and 4 are what actually close the
+spec** — the *hidden-variable* (logP) and *mechanistic* halves respectively; do not omit them (the
+original 3-query set covered neither the logP confounder nor a clean mechanistic case).
+
+**Avoid the broad "reproduce everything" prompt here.** A general "reproduce all findings" request
+makes CoScientist's `PlannerAgent` decompose the task and emit a `TaskTracker` progress log
+("TASK-1 DONE …") as the answer — internal orchestration state, not a scientific reply, and it tends
+to cover only a few analyses. Prefer `interpret_toxicity_link` (above) or the targeted queries. That
+task-log leak is a CoScientist orchestrator-prompt behaviour, **not this server** — see
+[`COSCIENTIST_INTEGRATION.md`](./COSCIENTIST_INTEGRATION.md#user-facing-output-task-log-leak).
+
+---
+
 ## Part A — Questions the paper answers
 
 The paper (Nikitin et al. 2025) is a step toward *explainable* computational toxicology: using a

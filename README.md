@@ -32,6 +32,7 @@ Vina-GPU docking in the paper was a one-time data-generation step; its output *i
 | `protein_panel` | Table S1 | the 44 Bowes-panel targets + names + orthology note |
 | `reproduce_all` | — | recomputes all headline numbers, compared to the paper |
 | `reproduce_claims` | all | the paper's 11 conclusions, each restated with reproduced numbers |
+| `interpret_toxicity_link` | §3.3–3.6 | one narrative: mechanistically-justified vs hidden-variable (logP) correlations |
 
 Each tool returns `{"answer": ..., "metadata": ...}`. Figures are saved as PNG to a local artifacts
 dir (`TOX_ARTIFACTS_DIR`) or, if S3 is configured, uploaded and returned as presigned URLs (same
