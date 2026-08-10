@@ -5,22 +5,15 @@ URL, matching the chemical-mcp-server pattern) or to a local artifacts directory
 """
 from __future__ import annotations
 
-import io
-import logging
-import uuid
-from pathlib import Path
-
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 
-from . import science
-from .config import get_settings
+from . import artifacts, science
 from .dataset import Dataset
 
-logger = logging.getLogger(__name__)
 sns.set_theme(style="whitegrid")
 
 
@@ -29,42 +22,7 @@ sns.set_theme(style="whitegrid")
 # --------------------------------------------------------------------------- #
 def save_fig(fig, name: str) -> dict:
     """Render `fig` to PNG and store it. Returns {"artifact": ..., "kind": ...}."""
-    settings = get_settings()
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=130, bbox_inches="tight")
-    plt.close(fig)
-    data = buf.getvalue()
-    filename = f"{name}_{uuid.uuid4().hex[:8]}.png"
-
-    if settings.use_s3:
-        try:
-            import boto3
-            from botocore.config import Config
-
-            client = boto3.client(
-                "s3",
-                endpoint_url=settings.s3_endpoint_url,
-                aws_access_key_id=settings.s3_access_key,
-                aws_secret_access_key=settings.s3_secret_key,
-                config=Config(signature_version="s3v4"),
-            )
-            key = f"tox_antitargets/{filename}"
-            client.upload_fileobj(io.BytesIO(data), settings.s3_bucket_name, key)
-            url = client.generate_presigned_url(
-                "get_object",
-                Params={"Bucket": settings.s3_bucket_name, "Key": key},
-                ExpiresIn=settings.s3_url_expiration,
-            )
-            return {"artifact": url, "kind": "s3"}
-        except Exception as exc:  # noqa: BLE001 - fall back to local on any S3 error
-            logger.warning("S3 upload failed (%s); saving locally", exc)
-
-    out_dir = Path(settings.artifacts_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    path = out_dir / filename
-    path.write_bytes(data)
-    artifact = f"{settings.artifact_url_base.rstrip('/')}/{filename}" if settings.artifact_url_base else str(path)
-    return {"artifact": artifact, "kind": "local"}
+    return artifacts.save_figure(fig, name, dpi=130)
 
 
 # --------------------------------------------------------------------------- #
